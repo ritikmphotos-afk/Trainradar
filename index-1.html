@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>India Train Radar — Live Map (Demo)</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<style>
+  /* ============================================================
+     INLINE CSS — no external stylesheet, everything lives here
+     ============================================================ */
+  :root{
+    --bg:#0D1117;
+    --panel:#111827;
+    --panel-2:#0b1220;
+    --text:#E6EDF3;
+    --muted:#8B98A5;
+    --line:#22303c;
+    --accent:#3B82F6;
+    --accent-2:#22C55E;
+    --danger:#EF4444;
+    --warn:#F59E0B;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; height:100%;
+    background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    overflow:hidden;
+  }
+  #map{
+    position:absolute; inset:0;
+    background:#0a0f14;
+  }
+  /* Leaflet dark tile filter — cheap "satellite-at-night" look without a paid tile provider */
+  #map .leaflet-tile-pane{ filter:saturate(0.85) brightness(0.75) contrast(1.05); }
+
+  /* ---------- Top search / title bar ---------- */
+  #topbar{
+    position:absolute; top:0; left:0; right:0; z-index:1000;
+    display:flex; align-items:center; gap:10px;
+    padding:12px 14px;
+    background:linear-gradient(to bottom, rgba(13,17,23,0.95), rgba(13,17,23,0.0));
+    pointer-events:none;
+  }
+  #topbar .pill{
+    pointer-events:auto;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:12px 14px;
+    display:flex; align-items:center; gap:10px;
+    flex:1;
+    box-shadow:0 6px 20px rgba(0,0,0,0.35);
+  }
+  #topbar input{
+    background:transparent; border:none; outline:none;
+    color:var(--text); font-size:15px; width:100%;
+  }
+  #topbar input::placeholder{ color:var(--muted); }
+  #topbar svg{ flex-shrink:0; }
+
+  /* ---------- Live counter chip (bottom-left, like RailRadar's "0 HALTED") ---------- */
+  #counter{
+    position:absolute; left:14px; bottom:14px; z-index:1000;
+    width:74px; height:74px; border-radius:50%;
+    background:var(--panel-2);
+    border:2px solid var(--accent-2);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    box-shadow:0 6px 20px rgba(0,0,0,0.4);
+  }
+  #counter .num{ font-size:20px; font-weight:700; line-height:1; }
+  #counter .label{ font-size:9px; color:var(--accent-2); letter-spacing:0.5px; margin-top:2px; }
+
+  /* ---------- Map controls stack (top-right) ---------- */
+  #controls{
+    position:absolute; right:14px; top:80px; z-index:1000;
+    display:flex; flex-direction:column; gap:10px;
+  }
+  #controls button{
+    width:44px; height:44px; border-radius:12px;
+    background:var(--panel); border:1px solid var(--line);
+    color:var(--text); font-size:18px;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 4px 14px rgba(0,0,0,0.35);
+  }
+
+  /* ---------- Bottom info sheet ---------- */
+  #sheet{
+    position:absolute; left:0; right:0; bottom:0; z-index:1100;
+    background:var(--panel);
+    border-top-left-radius:20px; border-top-right-radius:20px;
+    border-top:1px solid var(--line);
+    box-shadow:0 -10px 30px rgba(0,0,0,0.5);
+    padding:10px 18px 22px;
+    transform:translateY(110%);
+    transition:transform 0.28s ease;
+  }
+  #sheet.open{ transform:translateY(0); }
+  #sheet .grabber{
+    width:36px; height:4px; border-radius:3px; background:var(--line);
+    margin:0 auto 14px;
+  }
+  #sheet .row1{ display:flex; align-items:center; justify-content:space-between; }
+  #sheet .train-id{ font-size:15px; color:var(--accent); font-weight:700; }
+  #sheet .train-name{ font-size:15px; color:var(--text); margin-left:6px; }
+  #sheet .close-btn{
+    background:none; border:none; color:var(--muted); font-size:20px; line-height:1;
+    padding:4px; cursor:pointer;
+  }
+  #sheet .type-badge{
+    display:inline-block; font-size:11px; color:var(--muted);
+    border:1px solid var(--line); border-radius:6px; padding:2px 7px;
+    margin-top:6px;
+  }
+  #sheet .hop{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-top:16px; font-size:14px;
+  }
+  #sheet .hop .station{ display:flex; flex-direction:column; }
+  #sheet .hop .station .code{ font-size:11px; color:var(--muted); letter-spacing:0.5px; }
+  #sheet .hop .station .name{ font-size:14px; color:var(--text); margin-top:2px; }
+  #sheet .hop .arrow{ color:var(--muted); font-size:16px; padding:0 8px; }
+  #sheet .meta-row{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-top:14px; font-size:13px; color:var(--muted);
+  }
+  #sheet .meta-row .eta{ color:var(--text); font-weight:600; }
+
+  /* ---------- Custom rotated arrow marker ---------- */
+  .train-arrow{
+    filter:drop-shadow(0 1px 3px rgba(0,0,0,0.6));
+  }
+
+  /* ---------- Loading note ---------- */
+  #datanote{
+    position:absolute; left:14px; top:80px; z-index:999;
+    background:rgba(17,24,39,0.9); border:1px solid var(--line);
+    color:var(--muted); font-size:11px; padding:8px 10px; border-radius:10px;
+    max-width:200px; line-height:1.4;
+  }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="topbar">
+  <div class="pill">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8B98A5" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input id="searchBox" type="text" placeholder="Search train number or name" />
+  </div>
+</div>
+
+<div id="datanote">Demo data — 14 sample trains, shaped like the real RailRadar feed (current → next station hops).</div>
+
+<div id="controls">
+  <button id="locateBtn" title="My location">◎</button>
+  <button id="resetBtn" title="Reset view">⤢</button>
+</div>
+
+<div id="counter">
+  <div class="num" id="runningCount">0</div>
+  <div class="label">RUNNING</div>
+</div>
+
+<div id="sheet">
+  <div class="grabber"></div>
+  <div class="row1">
+    <div>
+      <span class="train-id" id="sTrainId"></span><span class="train-name" id="sTrainName"></span>
+      <div class="type-badge" id="sType"></div>
+    </div>
+    <button class="close-btn" id="sClose">✕</button>
+  </div>
+  <div class="hop">
+    <div class="station">
+      <span class="code" id="sCurrentCode"></span>
+      <span class="name" id="sCurrentName"></span>
+    </div>
+    <span class="arrow">→</span>
+    <div class="station" style="align-items:flex-end;">
+      <span class="code" id="sNextCode"></span>
+      <span class="name" id="sNextName"></span>
+    </div>
+  </div>
+  <div class="meta-row">
+    <span>Distance covered: <span class="eta" id="sDistance"></span> km</span>
+    <span>ETA next: <span class="eta" id="sEta"></span></span>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+/* ================================================================
+   INDIA TRAIN RADAR — DEMO
+   ----------------------------------------------------------------
+   This is a working front-end skeleton, same shape as the real
+   product: Leaflet map + rotated arrow markers + click-to-inspect
+   bottom sheet, exactly like railradar.in/railradar.
+
+   WHAT'S MOCKED vs REAL:
+   - Map, markers, rotation, click handling, route polylines,
+     bottom sheet UI -> fully real, works today.
+   - Train positions/status -> MOCK DATA below (MOCK_TRAINS array).
+     Replace loadTrains() with a fetch() to your own Netlify
+     Function (see netlify/functions/get-live-trains.js in this
+     project) once you have a real data source/API key.
+
+   HOW TO GO LIVE:
+   1. Get an API key (e.g. RailRadar API) or your own live-position
+      source that returns [{trainNumber, trainName, lat, lng,
+      bearing, fromStation, toStation, currentStation, delayMinutes,
+      status}, ...] for many trains in one call.
+   2. Put the key in a Netlify environment variable (never in this
+      file — this file ships to the browser).
+   3. Point loadTrains() at "/.netlify/functions/get-live-trains"
+      instead of MOCK_TRAINS.
+   4. Keep the render/interaction code below unchanged.
+   ================================================================ */
+
+  // ---------------------------------------------------------------
+  // 1. MOCK DATA — shaped exactly like the REAL RailRadar
+  //    /v1/legacy/trains/live-map response (raw field names), so the
+  //    same normalizeTrain() below is exercised by mock AND real data.
+  //    Real feed gives current->next station HOPS, not a full
+  //    from/to route, and no ready-made delay figure — see README.
+  // ---------------------------------------------------------------
+  const MOCK_RAW_TRAINS = [
+    { train_number:"22911", train_name:"SHIPRA EXPRESS", type:"SUF",
+      current_station:"SGO", current_station_name:"Saugor", current_lat:23.8388, current_lng:78.7378,
+      next_station:"DMO", next_station_name:"Damoh", next_lat:23.8388, next_lng:79.4409,
+      next_arrival_minutes:1235, curr_distance:610.4, current_day:1 },
+    { train_number:"12951", train_name:"MUMBAI RAJDHANI", type:"RAJ",
+      current_station:"UDZ", current_station_name:"Udaipur City", current_lat:24.5854, current_lng:73.7125,
+      next_station:"MTD", next_station_name:"Mavli Jn", next_lat:24.7333, next_lng:73.9167,
+      next_arrival_minutes:70, curr_distance:735.0, current_day:1 },
+    { train_number:"12301", train_name:"KOLKATA RAJDHANI", type:"RAJ",
+      current_station:"PRYJ", current_station_name:"Prayagraj Jn", current_lat:25.4358, current_lng:81.8463,
+      next_station:"MZP", next_station_name:"Manikpur", next_lat:25.0667, next_lng:81.1167,
+      next_arrival_minutes:340, curr_distance:640.2, current_day:1 },
+    { train_number:"12621", train_name:"TAMIL NADU EXPRESS", type:"SUF",
+      current_station:"CD", current_station_name:"Chandrapur", current_lat:19.9975, current_lng:79.3038,
+      next_station:"BPQ", next_station_name:"Balharshah", next_lat:19.8500, next_lng:79.3167,
+      next_arrival_minutes:900, curr_distance:1005.6, current_day:2 },
+    { train_number:"12009", train_name:"SHATABDI EXPRESS", type:"SHT",
+      current_station:"AGC", current_station_name:"Agra Cantt", current_lat:27.1767, current_lng:78.0081,
+      next_station:"TDL", next_station_name:"Tundla Jn", next_lat:27.2167, next_lng:78.2333,
+      next_arrival_minutes:520, curr_distance:198.3, current_day:1 },
+    { train_number:"12245", train_name:"DURONTO EXPRESS", type:"DNT",
+      current_station:"WL", current_station_name:"Warangal", current_lat:17.9784, current_lng:79.5941,
+      next_station:"KZJ", next_station_name:"Kazipet Jn", next_lat:18.0000, next_lng:79.5167,
+      next_arrival_minutes:610, curr_distance:520.1, current_day:1 },
+    { train_number:"12841", train_name:"COROMANDEL EXPRESS", type:"SUF",
+      current_station:"VSKP", current_station_name:"Visakhapatnam", current_lat:17.6868, current_lng:83.2185,
+      next_station:"DVD", next_station_name:"Duvvada", next_lat:17.7500, next_lng:83.1500,
+      next_arrival_minutes:730, curr_distance:872.5, current_day:1 },
+    { train_number:"12903", train_name:"GOLDEN TEMPLE MAIL", type:"MEX",
+      current_station:"INDB", current_station_name:"Indore Jn", current_lat:22.7196, current_lng:75.8577,
+      next_station:"DWX", next_station_name:"Dewas", next_lat:22.9667, next_lng:76.0500,
+      next_arrival_minutes:65, curr_distance:590.0, current_day:1 },
+    { train_number:"12649", train_name:"SAMPARK KRANTI", type:"SUF",
+      current_station:"NGP", current_station_name:"Nagpur Jn", current_lat:21.1458, current_lng:79.0882,
+      next_station:"BPQ", next_station_name:"Balharshah", next_lat:19.8500, next_lng:79.3167,
+      next_arrival_minutes:180, curr_distance:820.0, current_day:1 },
+    { train_number:"12723", train_name:"TELANGANA EXPRESS", type:"SUF",
+      current_station:"NED", current_station_name:"Nanded", current_lat:19.1500, current_lng:77.3167,
+      next_station:"PBN", next_station_name:"Purna Jn", next_lat:19.1667, next_lng:77.0500,
+      next_arrival_minutes:400, curr_distance:610.0, current_day:1 },
+    { train_number:"12295", train_name:"SANGHAMITRA EXPRESS", type:"SUF",
+      current_station:"BBS", current_station_name:"Bhubaneswar", current_lat:20.2961, current_lng:85.8245,
+      next_station:"KUR", next_station_name:"Khurda Road Jn", next_lat:20.1833, next_lng:85.6167,
+      next_arrival_minutes:230, curr_distance:450.0, current_day:1 },
+    { train_number:"12801", train_name:"PURUSHOTTAM EXPRESS", type:"SUF",
+      current_station:"BPL", current_station_name:"Bhopal Jn", current_lat:23.2599, current_lng:77.4126,
+      next_station:"HBD", next_station_name:"Habibganj", next_lat:23.2167, next_lng:77.4333,
+      next_arrival_minutes:900, curr_distance:700.0, current_day:2 },
+    { train_number:"12433", train_name:"CHENNAI RAJDHANI", type:"RAJ",
+      current_station:"BZA", current_station_name:"Vijayawada Jn", current_lat:16.5062, current_lng:80.6480,
+      next_station:"NLDA", next_station_name:"Nalgonda", next_lat:17.0500, next_lng:79.2667,
+      next_arrival_minutes:1000, curr_distance:1150.0, current_day:1 },
+    { train_number:"12554", train_name:"VAISHALI EXPRESS", type:"MEX",
+      current_station:"LKO", current_station_name:"Lucknow", current_lat:26.8467, current_lng:80.9462,
+      next_station:"BBK", next_station_name:"Barabanki Jn", next_lat:26.9333, next_lng:81.1833,
+      next_arrival_minutes:180, curr_distance:500.0, current_day:1 },
+  ];
+
+  // Same shape-conversion the Netlify Function does server-side for
+  // the real API — kept here too so mock data renders identically.
+  function bearingDeg(lat1, lng1, lat2, lng2){
+    const toRad = d => d * Math.PI / 180;
+    const toDeg = r => r * 180 / Math.PI;
+    const dLng = toRad(lng2 - lng1);
+    const y = Math.sin(dLng) * Math.cos(toRad(lat2));
+    const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+              Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLng);
+    return (toDeg(Math.atan2(y, x)) + 360) % 360;
+  }
+  function normalizeTrain(t){
+    return {
+      number: t.train_number,
+      name: t.train_name,
+      type: t.type,
+      currentCode: t.current_station,
+      currentName: t.current_station_name,
+      nextCode: t.next_station,
+      nextName: t.next_station_name,
+      lat: t.current_lat,
+      lng: t.current_lng,
+      nextLat: t.next_lat,
+      nextLng: t.next_lng,
+      bearing: bearingDeg(t.current_lat, t.current_lng, t.next_lat, t.next_lng),
+      nextArrivalMinutes: t.next_arrival_minutes,
+      distanceKm: t.curr_distance,
+      dayOfJourney: t.current_day,
+    };
+  }
+  const MOCK_TRAINS = MOCK_RAW_TRAINS.map(normalizeTrain);
+
+  // ---------------------------------------------------------------
+  // 2. MAP SETUP
+  // ---------------------------------------------------------------
+  const map = L.map('map', { zoomControl:false, attributionControl:false })
+    .setView([22.9, 79.5], 5);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom:18, minZoom:4
+  }).addTo(map);
+
+  document.getElementById('resetBtn').onclick = () => map.setView([22.9, 79.5], 5);
+  document.getElementById('locateBtn').onclick = () => {
+    map.locate({setView:true, maxZoom:10});
+  };
+
+  // colour a train gets based on its train number (purely cosmetic
+  // variety, same idea as the multi-colour markers in the real app)
+  const PALETTE = ["#3B82F6","#22C55E","#F59E0B","#EC4899","#A855F7"];
+  function colourFor(trainNumber){
+    let sum = 0;
+    for (const ch of trainNumber) sum += ch.charCodeAt(0);
+    return PALETTE[sum % PALETTE.length];
+  }
+
+  // Build a rotated arrow divIcon for a given bearing (degrees, 0 = north)
+  function arrowIcon(colour, bearingDeg){
+    const svg = `
+      <svg class="train-arrow" width="26" height="26" viewBox="0 0 26 26"
+           style="transform:rotate(${bearingDeg}deg)">
+        <path d="M13 2 L20 20 L13 15.5 L6 20 Z" fill="${colour}" stroke="#0D1117" stroke-width="1"/>
+      </svg>`;
+    return L.divIcon({
+      html:svg, className:'', iconSize:[26,26], iconAnchor:[13,13]
+    });
+  }
+
+  // ---------------------------------------------------------------
+  // 3. RENDER TRAINS
+  // ---------------------------------------------------------------
+  const markerLayer = L.layerGroup().addTo(map);
+  let activeRoute = null; // currently drawn polyline, if any
+  let trainsById = {};
+
+  function renderTrains(trains){
+    markerLayer.clearLayers();
+    trainsById = {};
+    document.getElementById('runningCount').textContent = trains.length;
+
+    trains.forEach(t => {
+      trainsById[t.number] = t;
+      const colour = colourFor(t.number);
+      const marker = L.marker([t.lat, t.lng], { icon: arrowIcon(colour, t.bearing) });
+      marker.on('click', () => openSheet(t.number));
+      marker.addTo(markerLayer);
+    });
+  }
+
+  // Draw a line from the train's current position to its next
+  // station. This uses REAL coordinates from the feed (current_lat/lng
+  // -> next_lat/lng) — not a guess — but it's still just the next
+  // hop, not the train's full remaining journey, since the bulk feed
+  // doesn't include full route geometry. For a curved, full-route
+  // line, call the separate Train Route Geometry (GIS) endpoint for
+  // that one train number when it's selected.
+  function drawRoute(train){
+    if (activeRoute) { map.removeLayer(activeRoute); activeRoute = null; }
+    activeRoute = L.polyline(
+      [[train.lat, train.lng], [train.nextLat, train.nextLng]],
+      { color: colourFor(train.number), weight:3, opacity:0.85, dashArray:"6,6" }
+    ).addTo(map);
+    activeRoute.on('click', () => openSheet(train.number));
+  }
+
+  renderTrains(MOCK_TRAINS);
+
+  // ---------------------------------------------------------------
+  // 4. BOTTOM SHEET — shared by marker clicks and route-line clicks
+  // ---------------------------------------------------------------
+  const sheet = document.getElementById('sheet');
+
+  // next_arrival_minutes is time-of-day in minutes (0-1439) -> "HH:MM"
+  function clockFromMinutes(mins){
+    if (mins == null) return "—";
+    const h = Math.floor(mins / 60) % 24;
+    const m = Math.round(mins % 60);
+    return String(h).padStart(2,'0') + ":" + String(m).padStart(2,'0');
+  }
+
+  function openSheet(trainNumber){
+    const t = trainsById[trainNumber];
+    if (!t) return;
+
+    document.getElementById('sTrainId').textContent = t.number + " · ";
+    document.getElementById('sTrainName').textContent = t.name;
+    document.getElementById('sType').textContent = t.type || "—";
+
+    document.getElementById('sCurrentCode').textContent = t.currentCode;
+    document.getElementById('sCurrentName').textContent = t.currentName;
+    document.getElementById('sNextCode').textContent = t.nextCode;
+    document.getElementById('sNextName').textContent = t.nextName;
+
+    document.getElementById('sDistance').textContent = t.distanceKm != null ? t.distanceKm.toFixed(1) : "—";
+    document.getElementById('sEta').textContent = clockFromMinutes(t.nextArrivalMinutes);
+
+    drawRoute(t);
+    sheet.classList.add('open');
+  }
+
+  document.getElementById('sClose').onclick = () => {
+    sheet.classList.remove('open');
+    if (activeRoute){ map.removeLayer(activeRoute); activeRoute = null; }
+  };
+
+  // ---------------------------------------------------------------
+  // 5. SEARCH — filter by number or name, pan to first match
+  // ---------------------------------------------------------------
+  document.getElementById('searchBox').addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    if (!q) { renderTrains(MOCK_TRAINS); return; }
+    const filtered = MOCK_TRAINS.filter(t =>
+      t.number.includes(q) || t.name.toLowerCase().includes(q)
+    );
+    renderTrains(filtered);
+    if (filtered.length){
+      map.setView([filtered[0].lat, filtered[0].lng], 7);
+    }
+  });
+
+  // ---------------------------------------------------------------
+  // 6. WHERE THE REAL API CALL WOULD GO
+  // ---------------------------------------------------------------
+  // async function loadTrains(){
+  //   const res = await fetch('/.netlify/functions/get-live-trains');
+  //   const json = await res.json();
+  //   renderTrains(json.trains);
+  // }
+  // loadTrains();
+  // setInterval(loadTrains, 5 * 60 * 1000); // refresh every 5 min to save API quota
+</script>
+</body>
+</html>
