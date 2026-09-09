@@ -390,7 +390,12 @@
     activeRoute.on('click', () => openSheet(train.number));
   }
 
-  renderTrains(MOCK_TRAINS);
+  // `allTrains` always holds whatever the currently-loaded data set is —
+  // starts as mock, becomes the live feed once loadTrains() runs. Both
+  // the initial render and the search box's "cleared" fallback read
+  // from this, so neither ever falls back to stale mock data by mistake.
+  let allTrains = MOCK_TRAINS;
+  renderTrains(allTrains);
 
   // ---------------------------------------------------------------
   // 4. BOTTOM SHEET — shared by marker clicks and route-line clicks
@@ -436,7 +441,7 @@
   document.getElementById('searchBox').addEventListener('input', (e) => {
     const q = e.target.value.trim().toLowerCase();
     if (!q) { renderTrains(allTrains); return; }
-    const filtered = MOCK_TRAINS.filter(t =>
+    const filtered = allTrains.filter(t =>
       t.number.includes(q) || t.name.toLowerCase().includes(q)
     );
     renderTrains(filtered);
@@ -445,16 +450,18 @@
     }
   });
 
-   ---------------------------------------------------------------
-  // 6. WHERE THE REAL API CALL WOULD GO
   // ---------------------------------------------------------------
-    async function loadTrains(){
-     const res = await fetch('/.netlify/functions/get-live-trains');
-     const json = await res.json();
-   renderTrains(allTrains);
-   }
-   loadTrains();
-  setInterval(loadTrains, 5 * 60 * 1000); // refresh every 5 min to save API quota
+  // 6. REAL API CALL — uncomment to go live once RAILRADAR_API_KEY
+  //    is set in Netlify's environment variables (see README.md).
+  // ---------------------------------------------------------------
+  async function loadTrains(){
+    const res = await fetch('/api/get-live-trains'); // Vercel path — for Netlify use '/.netlify/functions/get-live-trains'
+    const json = await res.json();
+    allTrains = json.trains;
+    renderTrains(allTrains);
+  }
+  // loadTrains();
+  // setInterval(loadTrains, 5 * 60 * 1000); // refresh every 5 min to save API quota
 </script>
 </body>
 </html>
