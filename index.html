@@ -435,7 +435,7 @@
   // ---------------------------------------------------------------
   document.getElementById('searchBox').addEventListener('input', (e) => {
     const q = e.target.value.trim().toLowerCase();
-    if (!q) { renderTrains(MOCK_TRAINS); return; }
+    if (!q) { renderTrains(allTrains); return; }
     const filtered = MOCK_TRAINS.filter(t =>
       t.number.includes(q) || t.name.toLowerCase().includes(q)
     );
@@ -445,16 +445,16 @@
     }
   });
 
-  // ---------------------------------------------------------------
+   ---------------------------------------------------------------
   // 6. WHERE THE REAL API CALL WOULD GO
   // ---------------------------------------------------------------
-  // async function loadTrains(){
-  //   const res = await fetch('/.netlify/functions/get-live-trains');
-  //   const json = await res.json();
-  //   renderTrains(json.trains);
-  // }
-  // loadTrains();
-  // setInterval(loadTrains, 5 * 60 * 1000); // refresh every 5 min to save API quota
+    async function loadTrains(){
+     const res = await fetch('/.netlify/functions/get-live-trains');
+     const json = await res.json();
+   renderTrains(allTrains);
+   }
+   loadTrains();
+  setInterval(loadTrains, 5 * 60 * 1000); // refresh every 5 min to save API quota
 </script>
 </body>
 </html>
